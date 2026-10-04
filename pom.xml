@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.crd</groupId>
-    <artifactId>car-rental</artifactId>
+    <artifactId>crd-car-rental</artifactId>
     <version>1.0-SNAPSHOT</version>
 
     <properties>
