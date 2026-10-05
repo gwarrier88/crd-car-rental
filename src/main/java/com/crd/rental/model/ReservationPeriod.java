@@ -3,9 +3,11 @@ package com.crd.rental.model;
 import java.time.LocalDateTime;
 
 /**
- * Half-open time period record to keep track of a reservation
- * @param start
- * @param end
+ * Time period of a reservation, half-open: [start, end).
+ * The car is out from start up to, but not including, end, so a car returned at 10:00
+ * can be picked up again at 10:00.
+ * @param start pickup time, included in the period
+ * @param end return time, not included in the period; must be after start
  */
 public record ReservationPeriod(LocalDateTime start, LocalDateTime end) {
 
@@ -15,12 +17,14 @@ public record ReservationPeriod(LocalDateTime start, LocalDateTime end) {
 
         if(end.isBefore(start))
             throw new IllegalArgumentException("End date cannot be before start date");
+
+        if(!end.isAfter(start))
+            throw new IllegalArgumentException("End date must be after start date");
     }
 
     /**
-     * Check if a period overlaps with another one
-     * @param other
-     * @return
+     * @param other the period to compare with
+     * @return true if the two periods share any moment; periods that only touch at an end do not overlap
      */
     public boolean overlapsWith(ReservationPeriod other) {
         return start.isBefore(other.end) && end.isAfter(other.start);
