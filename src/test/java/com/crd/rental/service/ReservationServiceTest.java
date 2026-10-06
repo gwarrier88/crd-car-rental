@@ -7,6 +7,7 @@ import com.crd.rental.exception.ReservationNotFoundException;
 import com.crd.rental.model.CarType;
 import com.crd.rental.model.Fleet;
 import com.crd.rental.model.Reservation;
+import com.crd.rental.model.ReservationPeriod;
 import com.crd.rental.model.ReservationRequest;
 import org.junit.jupiter.api.Test;
 
@@ -14,8 +15,15 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -223,5 +231,56 @@ public class ReservationServiceTest {
         assertThrows(IllegalArgumentException.class, () -> new ReservationService(null, repository, CLOCK));
         assertThrows(IllegalArgumentException.class, () -> new ReservationService(fleet, null, CLOCK));
         assertThrows(IllegalArgumentException.class, () -> new ReservationService(fleet, repository, null));
+    }
+
+    @Test
+    void onlyCapacityManyConcurrentRequestsSucceed() throws Exception {
+        int capacity = 3;
+        int threads = 20;
+
+        //pause between reading the overlapping reservations and saving the new one,
+        //so without a lock every thread would see no reservations and all would succeed
+        InMemoryReservationRepository slowRepository = new InMemoryReservationRepository() {
+            @Override
+            public List<Reservation> findActiveReservationsWithOverlap(CarType type, ReservationPeriod period) {
+                List<Reservation> overlapping = super.findActiveReservationsWithOverlap(type, period);
+                try {
+                    Thread.sleep(10);
+                } catch(InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return overlapping;
+            }
+        };
+        ReservationService service = new ReservationService(new Fleet(Map.of(CarType.SUV, capacity)), slowRepository, CLOCK);
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<Boolean>> results = new ArrayList<>();
+
+        //every thread waits on the latch so all requests for the same period arrive at the same moment
+        for(int i = 0; i < threads; i++) {
+            results.add(executor.submit(() -> {
+                start.await();
+                try {
+                    reserve(service, CarType.SUV, 0, 3);
+                    return true;
+                } catch(NoCarAvailableException e) {
+                    return false;
+                }
+            }));
+        }
+        start.countDown();
+        executor.shutdown();
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+
+        //get() rethrows any other exception a thread hit, failing the test
+        int succeeded = 0;
+        for(Future<Boolean> result : results) {
+            if(result.get())
+                succeeded++;
+        }
+
+        assertEquals(capacity, succeeded);
+        assertEquals(capacity, service.findReservationsByType(CarType.SUV).size());
     }
 }
